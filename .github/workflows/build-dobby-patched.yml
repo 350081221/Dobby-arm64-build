@@ -23,9 +23,10 @@ jobs:
 
       - name: Apply patch
         run: |
+          sed -i 's|mnt/data/dobby_work/Dobby-master/||g' dobby_instrument_arm64_lr_fp.patch
           cd Dobby
           git apply ../dobby_instrument_arm64_lr_fp.patch
-
+      
       - name: Build Android arm64 static library
         run: |
           cd Dobby
