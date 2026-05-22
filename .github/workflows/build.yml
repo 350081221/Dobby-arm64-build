@@ -21,7 +21,7 @@ jobs:
 
       - name: Build Android arm64 .a
         run: |
-          SOURCE_DIR=$(dirname $(find src -maxdepth 3 -name CMakeLists.txt | head -n 1))
+          SOURCE_DIR=$(dirname $(find src -name CMakeLists.txt | while read f; do grep -q "project(Dobby" "$f" && echo "$f"; done | head -n 1))
           cd "$SOURCE_DIR"
 
           cmake -S . -B build-android-arm64 \
@@ -53,7 +53,7 @@ jobs:
 
       - name: Build iOS arm64 .a
         run: |
-          SOURCE_DIR=$(dirname $(find src -maxdepth 3 -name CMakeLists.txt | head -n 1))
+          SOURCE_DIR=$(dirname $(find src -name CMakeLists.txt | while read f; do grep -q "project(Dobby" "$f" && echo "$f"; done | head -n 1))
           cd "$SOURCE_DIR"
 
           cmake -S . -B build-ios-arm64 \
