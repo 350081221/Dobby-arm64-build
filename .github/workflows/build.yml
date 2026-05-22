@@ -1,0 +1,74 @@
+name: Build Dobby static libs
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  android-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+
+      - name: Unzip source
+        run: |
+          unzip Dobby-master-lr-fp-optimized-source.zip -d src
+          find src -maxdepth 3 -name CMakeLists.txt
+
+      - name: Build Android arm64 .a
+        run: |
+          SOURCE_DIR=$(dirname $(find src -maxdepth 3 -name CMakeLists.txt | head -n 1))
+          cd "$SOURCE_DIR"
+
+          cmake -S . -B build-android-arm64 \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-23 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF
+
+          cmake --build build-android-arm64 -j2
+
+          mkdir -p "$GITHUB_WORKSPACE/artifacts/android-arm64"
+          find build-android-arm64 -name "*.a" -exec cp {} "$GITHUB_WORKSPACE/artifacts/android-arm64/" \;
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dobby-android-arm64-a
+          path: artifacts/android-arm64/*.a
+
+  ios-arm64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip source
+        run: |
+          unzip Dobby-master-lr-fp-optimized-source.zip -d src
+          find src -maxdepth 3 -name CMakeLists.txt
+
+      - name: Build iOS arm64 .a
+        run: |
+          SOURCE_DIR=$(dirname $(find src -maxdepth 3 -name CMakeLists.txt | head -n 1))
+          cd "$SOURCE_DIR"
+
+          cmake -S . -B build-ios-arm64 \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF
+
+          cmake --build build-ios-arm64 -j2
+
+          mkdir -p "$GITHUB_WORKSPACE/artifacts/ios-arm64"
+          find build-ios-arm64 -name "*.a" -exec cp {} "$GITHUB_WORKSPACE/artifacts/ios-arm64/" \;
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dobby-ios-arm64-a
+          path: artifacts/ios-arm64/*.a
