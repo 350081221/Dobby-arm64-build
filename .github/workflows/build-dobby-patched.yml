@@ -37,11 +37,15 @@ jobs:
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
+            -DDOBBY_GENERATE_SHARED=OFF \
+            -DDOBBY_BUILD_EXAMPLE=OFF \
+            -DDOBBY_BUILD_TEST=OFF \
             -DDOBBY_DEBUG=OFF
-          cmake --build build-android-arm64 --config Release -j$(nproc)
+
+          cmake --build build-android-arm64 --target dobby_static -j$(nproc)
 
       - name: Upload static library
         uses: actions/upload-artifact@v4
         with:
           name: libdobby-patched-android-arm64
-          path: Dobby/build-android-arm64/libdobby.a
+          path: Dobby/build-android-arm64/libdobby_static.a
