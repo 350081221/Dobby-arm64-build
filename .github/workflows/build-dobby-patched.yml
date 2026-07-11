@@ -3,12 +3,15 @@ name: Build patched Dobby Android arm64
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout this repo
+      - name: Checkout patch repository
         uses: actions/checkout@v4
 
       - name: Setup Android NDK
@@ -17,35 +20,52 @@ jobs:
           ndk-version: r27c
           add-to-path: true
 
-      - name: Download Dobby source
+      - name: Download pinned Dobby source
+        shell: bash
         run: |
-          git clone --recursive https://github.com/jmpews/Dobby.git Dobby
+          set -euo pipefail
+          git clone https://github.com/jmpews/Dobby.git Dobby
+          cd Dobby
+          git checkout --detach 5dfc8546954ce3b3198132ab13fddb89ee92cdd7
+          git submodule update --init --recursive
 
-      - name: Apply patch
+      - name: Apply LR preservation patch
+        shell: bash
         run: |
-          sed -i 's|mnt/data/dobby_work/Dobby-master/||g' dobby_instrument_arm64_lr_fp.patch
+          set -euo pipefail
+          test -f dobby_android_lr_code_only_v2.patch
           cd Dobby
-          git apply ../dobby_instrument_arm64_lr_fp.patch
-      
-      - name: Build Android arm64 static library
+          git apply --check ../dobby_android_lr_code_only_v2.patch
+          git apply ../dobby_android_lr_code_only_v2.patch
+          git diff --check
+
+      - name: Configure Android arm64 static library
+        shell: bash
         run: |
-          cd Dobby
-          mkdir -p build-android-arm64
-          cmake -S . -B build-android-arm64 \
+          set -euo pipefail
+          cmake -S Dobby -B Dobby/build-android-arm64 -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DDOBBY_GENERATE_SHARED=OFF \
             -DDOBBY_BUILD_EXAMPLE=OFF \
             -DDOBBY_BUILD_TEST=OFF \
             -DDOBBY_DEBUG=OFF
 
-          cmake --build build-android-arm64 --target dobby_static -j$(nproc)
+      - name: Build Android arm64 static library
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build Dobby/build-android-arm64 \
+            --target dobby_static \
+            --parallel "$(nproc)"
+          test -f Dobby/build-android-arm64/libdobby.a
 
       - name: Upload static library
         uses: actions/upload-artifact@v4
         with:
-          name: libdobby-patched-android-arm64
-          path: Dobby/build-android-arm64/libdobby_static.a
+          name: libdobby-lr-preserve-android-arm64
+          if-no-files-found: error
+          path: |
+            Dobby/build-android-arm64/libdobby.a
+            Dobby/include/dobby.h
