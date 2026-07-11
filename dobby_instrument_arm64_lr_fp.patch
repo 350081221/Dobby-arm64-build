@@ -1,0 +1,186 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c80451da9dd83a59d647b2d30413853715a455e3..e38f9bdddd9f41c40c1d80ed72a95bfc1c907fdb 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -118,6 +118,9 @@ endif ()
+ 
+ set(DOBBY_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+ set(dobby.SOURCE_FILE_LIST ${dobby.SOURCE_FILE_LIST}
++  # common
++  common/os_arch_features.cc
++
+   # cpu
+ 
+   # assembler
+diff --git a/README.md b/README.md
+index abb52ebb50de598ee88764d6586718a7c90f2eb1..241336906df05bccfafbaf53e60077ed2224718d 100755
+--- a/README.md
++++ b/README.md
+@@ -3,6 +3,7 @@
+ > This source snapshot contains an Android-focused return-address preservation
+ > patch for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`. See
+ > [docs/android-return-address-preservation.md](docs/android-return-address-preservation.md).
++> v2 also removes the `os_arch_features.h`/`platform.h` include cycle seen with Android NDK r27.
+ 
+ [![Contact me Telegram](https://img.shields.io/badge/Contact%20me-Telegram-blue.svg)](https://t.me/IOFramebuffer) [![Join group Telegram](https://img.shields.io/badge/Join%20group-Telegram-brightgreen.svg)](https://t.me/dobby_group)
+ 
+diff --git a/README_zh-cn.md b/README_zh-cn.md
+index f3697870f724b595f8b57968845e138c1f0eac11..72b6cf7661c9d5541fa3961ea633d6497a5fa161 100644
+--- a/README_zh-cn.md
++++ b/README_zh-cn.md
+@@ -1,4 +1,4 @@
+-## Dobby Android LR/返回地址保持版
++## Dobby Android LR/返回地址保持版 v2
+ 
+ 此源码基于 Dobby，当前修改范围只面向以下 Android ABI：
+ 
+@@ -14,6 +14,7 @@
+ - 新增 `DobbyGetOriginalReturnAddress(ctx)`；
+ - 修复 Android arm64 汇编的 ELF/GOT 重定位写法；
+ - 修复源码快照中的若干 Android/Linux 构建阻塞问题；
++- 修复 `os_arch_features.h` 与 `platform.h` 的循环包含，兼容 Android NDK r27；
+ - 提供四 ABI 一键构建脚本 `scripts/build_android_only.sh`。
+ 
+ 详细说明见：
+diff --git a/VALIDATION.md b/VALIDATION.md
+index 704ae00869abb787650ae59cf0c1da98fab812a1..74e748cc06c0795b7c622d04a5acb1c7330135e6 100644
+--- a/VALIDATION.md
++++ b/VALIDATION.md
+@@ -27,6 +27,13 @@
+ 5. **备用 x86_64 动态汇编器路径**
+    - `BUILD_WITH_TRAMPOLINE_ASSEMBLER` 路径单独编译通过。
+ 
++
++6. **Android NDK r27 头文件依赖回归检查**
++   - 将 `features::android::make_memory_readable` 的实现从公共头文件移入独立 `.cc`；
++   - `ProcessRuntime.cc` 与 `platform-posix.cc` 在启用 Android 分支时通过语法编译；
++   - 不再依赖尚未声明的 `OSMemory`/`kReadExecute`；
++   - arm64 near-trampoline 不再重定义系统 `assert` 宏。
++
+ ## 尚未在当前环境完成
+ 
+ 当前执行环境没有安装完整 Android NDK，因此没有实际链接四套 Android `.so/.a`。源码已提供 `scripts/build_android_only.sh`，可在安装 NDK 后一次构建四个 ABI。
+diff --git a/common/os_arch_features.cc b/common/os_arch_features.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..2376eb2cf364b5953e29c12d2708d94b7a0eaecb
+--- /dev/null
++++ b/common/os_arch_features.cc
+@@ -0,0 +1,43 @@
++#include "common/os_arch_features.h"
++
++#include <stdint.h>
++
++#include "PlatformUnifiedInterface/platform.h"
++
++namespace features {
++namespace android {
++
++void make_memory_readable(void *address, size_t size) {
++#if defined(ANDROID) || defined(__ANDROID__)
++  if (address == nullptr || size == 0)
++    return;
++
++  const uintptr_t page_size = static_cast<uintptr_t>(OSMemory::PageSize());
++  if (page_size == 0)
++    return;
++
++  const uintptr_t begin = reinterpret_cast<uintptr_t>(address);
++  const uintptr_t end = begin + size;
++  if (end < begin)
++    return;
++
++  const uintptr_t page_begin = begin - (begin % page_size);
++  uintptr_t page_end = end;
++  const uintptr_t remainder = page_end % page_size;
++  if (remainder != 0) {
++    const uintptr_t padding = page_size - remainder;
++    if (page_end + padding < page_end)
++      return;
++    page_end += padding;
++  }
++
++  if (page_end > page_begin)
++    OSMemory::SetPermission(reinterpret_cast<void *>(page_begin), page_end - page_begin, kReadExecute);
++#else
++  (void)address;
++  (void)size;
++#endif
++}
++
++} // namespace android
++} // namespace features
+diff --git a/common/os_arch_features.h b/common/os_arch_features.h
+index ee0586de9a700ade30b90c371c6bf097186e04a2..0ad8145472e088481646bb69afe72f6ab80d1c3e 100644
+--- a/common/os_arch_features.h
++++ b/common/os_arch_features.h
+@@ -1,11 +1,10 @@
+ #pragma once
+ 
+-#include <sys/types.h>
+ #include <stddef.h>
++#include <stdint.h>
++#include <sys/types.h>
+ #include "pac_kit.h"
+ 
+-#include "PlatformUnifiedInterface/platform.h"
+-
+ #if defined(__arm64e__) && __has_feature(ptrauth_calls)
+ #include <ptrauth.h>
+ #endif
+@@ -34,13 +33,10 @@ template <typename T> inline T arm64e_pac_strip_and_sign(T &addr) {
+ } // namespace apple
+ 
+ namespace android {
+-inline void make_memory_readable(void *address, size_t size) {
+-#if defined(ANDROID)
+-  auto page = (void *)ALIGN_FLOOR(address, OSMemory::PageSize());
+-  if (!OSMemory::SetPermission(page, OSMemory::PageSize(), kReadExecute)) {
+-    return;
+-  }
+-#endif
+-}
++// Android may map executable code as execute-only. Make every page touched by
++// [address, address + size) readable before the relocator decodes instructions.
++// The implementation lives in os_arch_features.cc so this common header does
++// not depend on PlatformUnifiedInterface/platform.h (which includes common.h).
++void make_memory_readable(void *address, size_t size);
+ } // namespace android
+-} // namespace features
+\ No newline at end of file
++} // namespace features
+diff --git a/source/InterceptRouting/NearBranchTrampoline/near_trampoline_arm64.cc b/source/InterceptRouting/NearBranchTrampoline/near_trampoline_arm64.cc
+index 2ec08e8caea868bb115108312e9b856e99f3dc99..824d583b75ddf77a834cdbf5b78b2b92296a75b6 100644
+--- a/source/InterceptRouting/NearBranchTrampoline/near_trampoline_arm64.cc
++++ b/source/InterceptRouting/NearBranchTrampoline/near_trampoline_arm64.cc
+@@ -12,10 +12,11 @@
+ 
+ using namespace zz::arm64;
+ 
+-#define assert(x)                                                                                                      \
+-  if (!(x)) {                                                                                                          \
+-    *(int *)0x41414141 = 0;                                                                                            \
+-  }
++#define DOBBY_NEAR_ASSERT(x)                                                                                           \
++  do {                                                                                                                 \
++    if (!(x))                                                                                                          \
++      *(volatile int *)0x41414141 = 0;                                                                                 \
++  } while (0)
+ 
+ #define ARM64_B_XXX_RANGE ((1ull << 25) << 2) // signed
+ 
+@@ -30,7 +31,7 @@ static Trampoline *GenerateFastForwardTrampoline(addr_t src, addr_t dst) {
+   // [ldr + br + #label]
+   auto forward_tramp_insns_needed = 4 * 4;
+   auto blk = gNearMemoryAllocator.allocNearCodeBlock(forward_tramp_insns_needed, src, ARM64_B_XXX_RANGE);
+-  assert(blk.addr() % 4 == 0 && "address must be aligned to 4 bytes");
++  DOBBY_NEAR_ASSERT(blk.addr() % 4 == 0 && "address must be aligned to 4 bytes");
+   if (!blk.addr()) {
+     ERROR_LOG("search near code block failed");
+     return {};
+@@ -78,4 +79,6 @@ Trampoline *GenerateNearTrampolineBuffer(addr_t src, addr_t dst) {
+   return tramp;
+ }
+ 
++#undef DOBBY_NEAR_ASSERT
++
+ #endif
